@@ -1,6 +1,6 @@
 import re
 import requests
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urljoin
 from urllib.parse import parse_qs
 import time
 from collections import defaultdict
@@ -12,6 +12,7 @@ DELAY = float(config["CRAWLER"]["POLITENESS"])
 all_last_times = defaultdict(int)
 visited = set()
 trap_check = defaultdict(int)
+REDIRECT_LIMIT = 6
 
 
 def is_low_information(resp):
@@ -68,6 +69,30 @@ def scraper(url, resp):
 
     
     # How to handle redirection ????? - - - - - - - - - - - - - - - - - -
+    redir_num = 0
+    while resp.is_redirect:
+        if redir_num >= REDIRECT_LIMIT:
+            return []
+
+        redirect_url = resp.headers.get('Location')
+        if not redirect_url:
+            break
+        
+        # Making sure url is absolute
+        redirect_url = urljoin(url, redirect_url)
+
+        try:
+            resp = requests.get(redirect_url, allow_redirects=False)  
+            parse_url = redirect_url
+            parsed = urlparse(parse_url)  
+            redir_num += 1
+        except requests.RequestException as exception:
+            print(f"Url {redirect_url} has the exception: {exception}")
+            return []
+        
+    parsing = BeautifulSoup(resp.text, 'html.parser')
+    text = parsing.get_text()  
+    print(f"The url {redirect_url} is indexing the text {text[:200]}")
 
 
     # Avoid bad links or previously visited links. 
