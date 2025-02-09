@@ -1,4 +1,5 @@
 import re
+import requests
 from urllib.parse import urlparse
 from urllib.parse import parse_qs
 import time
@@ -36,8 +37,15 @@ def is_duplicate(resp):
     return True
 
 def is_large(resp):
-    # if greater than 10 MB, too large for us to crawl - - - - - - - - - - - - - 
-    return True
+    # if greater than 10 MB, too large for us to crawl (converted to mb)- - - - - - - - - - - - - 
+    try:
+        file_size = int(resp.headers.get('content-length'))
+        file_size = file_size / (1024 * 1024)
+        print(file_size)
+    except Exception:
+        return False
+    if file_size > 10:
+        return True
 
 
 
