@@ -11,6 +11,9 @@ DELAY = float(config["CRAWLER"]["POLITENESS"])
 all_last_times = defaultdict(int)
 visited = set()
 trap_check = defaultdict(int)
+unique_urls = set()
+page_word_counts = dict()
+longest_page = [None, 0]
 
 
 def is_low_information(resp):
@@ -41,6 +44,9 @@ def is_large(resp):
 
 def scraper(url, resp):
 
+    if not is_valid(url):
+        return []
+
     parsed = urlparse(url)
 
     # Sleep until the politness delay is met
@@ -70,17 +76,30 @@ def scraper(url, resp):
     # Track as visited
     visited.add(cleaned_base)
 
-    
+    # Add the defragmented URL to the unique set. Only inserts if unique.
+    cleaned_defragmented = f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
+    if parsed.query: 
+        cleaned_defragmented += f"?{parsed.query}"
+    cleaned_defragmented = cleaned_defragmented.rstrip("/").lower()
+    unique_urls.add(cleaned_defragmented)
 
-    # # Extract valid URLs
-    # links = [urljoin(url, a["href"]).split("#")[0] for a in soup.find_all("a", href=True)]
-    # return [link for link in links if is_valid(link)]
 
+    # Get all words in the page
+    soup = BeautifulSoup(resp.raw_response.content, "html.parser")
+    text = soup.get_text(separator=" ")
+    words = re.findall(r'\b[a-zA-Z]{1,}\b', text.lower())
 
-    # ------------------------------------------------------------------------------------------------------------------------
-    # This was the original two lines given in this function 
-    # links = extract_next_links(url, resp)
-    # return [link for link in links if is_valid(link)]
+    # Update longest page
+    N = 0
+    if words:
+        N = len(words)
+    if N > longest_page[1]:
+        longest_page[0] = url
+        longest_page[1] = N
+
+    # 50 most common words from all pages
+
+    # Subdomains
 
 
 
