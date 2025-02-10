@@ -6,6 +6,7 @@ import time
 from collections import defaultdict
 from bs4 import BeautifulSoup
 from collections import Counter
+from simhash import Simhash
 
 
 
@@ -20,6 +21,8 @@ longest_page = [None, 0]
 word_freqs = Counter() 
 subdomains = defaultdict(set)
 redir_dict = defaultdict(int)
+simhash_storage = {}
+
 
 
 def is_low_information(resp):
@@ -41,7 +44,21 @@ def is_trap(resp, parsed, cleaned_base):
 
 def is_duplicate(resp):
     # Do only how much the assignment asks for. It doesnt use the word "duplicate" but uses "similarity" in the instructions - - - - - - - - - - - - - 
-    return True
+    try:
+        parsing = BeautifulSoup(resp.raw_response.content, "html.parser")
+        content = parsing.get_text(separator=" ").strip()
+        simhash = Simhash(content)
+        for url_prev, simhash_prev in simhash_storage.items():
+            if simhash.distance(simhash_prev) < 5: 
+                print(f"Similarity between resp.url: {resp.url} and prev_url: {url_prev}")
+                return True
+
+        simhash_storage[resp.url] = simhash
+        return False
+
+    except Exception as exception:
+        print(f"Exception: {exception}")
+        return False
 
 def is_large(resp):
     # if greater than 10 MB, too large for us to crawl (converted to mb)- - - - - - - - - - - - - 
