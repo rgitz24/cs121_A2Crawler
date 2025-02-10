@@ -28,9 +28,13 @@ word_freqs = Counter()
 subdomains = defaultdict(set)
 redir_dict = defaultdict(int)
 simhash_storage = {}
-
 avoid_urls = set()
+LOG_FILE = "log.txt"
 
+def log_write(message):
+    print(message)
+    with open(LOG_FILE, "a", encoding="utf-8") as log_file:
+        log_file.write(message + "\n")
 
 def print_report():
 
@@ -113,14 +117,14 @@ def is_duplicate(resp):
         simhash = Simhash(content)
         for url_prev, simhash_prev in simhash_storage.items():
             if simhash.distance(simhash_prev) < 5: 
-                print(f"Similarity between resp.url: {resp.url} and prev_url: {url_prev}")
+                log_write(f"Similarity between resp.url: {resp.url} and prev_url: {url_prev}")
                 return True
 
         simhash_storage[resp.url] = simhash
         return False
 
     except Exception as exception:
-        print(f"Exception: {exception}")
+        log_write(f"Exception: {exception}")
         return False
 
 
@@ -130,11 +134,12 @@ def is_large(resp):
         if file_size is None:
             return True
         file_size = int(file_size) / (1024 * 1024)
-        print(file_size)
+        log_write(f"File size of {resp.url}: {file_size:.2f} MB")
         if file_size > 10:
             return True
     except Exception as e:
-        return True
+        log_write(f"Error in is_large: {e}")
+    return True
     
 
 def get_stop_words(file):
@@ -153,10 +158,6 @@ def defragment_and_clean(parsed):
     return cleaned_defragmented
 
 
-
-
-
-
 def scraper(url, resp):
 
     if not is_valid(url):
@@ -168,6 +169,7 @@ def scraper(url, resp):
     cleaned_defragmented = defragment_and_clean(parsed)
 
     if cleaned_defragmented in unique_urls or cleaned_defragmented in avoid_urls:
+        log_write(f"Skipping already visited or avoided URL: {cleaned_defragmented}")
         return []
     
     # Handle redirection
@@ -187,7 +189,7 @@ def scraper(url, resp):
         
             redir_dict[redirect_url] += 1
             redir_dict[url] += 1
-            print(f"Redirecting from {url} to {redirect_url}")
+            log_write(f"Redirecting from {url} to {redirect_url}")
 
             return [redirect_url]
         else:
@@ -211,6 +213,7 @@ def scraper(url, resp):
         return []
 
     unique_urls.add(cleaned_defragmented)
+    log_write(f"Processing URL: {cleaned_defragmented}")
 
 
     # Get subdomain
@@ -229,6 +232,7 @@ def scraper(url, resp):
     if N > longest_page[1]:
         longest_page[0] = url
         longest_page[1] = N
+        log_write(f"New longest page: {url} ({len(words)} words)")
 
     # 50 most common words from all pages. 
     stop_words = get_stop_words("stop_words_list.txt")
@@ -260,6 +264,7 @@ def extract_next_links(url, resp):
     # Return a list with the hyperlinks (as strings) scrapped from resp.raw_response.content
     
     if resp.status != 200 or not resp.raw_response:
+        log_write(f"{url} has bad status: {resp.status}")
         return []
 
     try:
@@ -272,11 +277,11 @@ def extract_next_links(url, resp):
             absolute_link = absolute_link.split("#")[0]
             if is_valid(absolute_link) and absolute_link not in avoid_urls: 
                 unique_links.add(absolute_link)
-
+        log_write(f"Extracted {len(unique_links)} unique valid links from {url}")
         return list(unique_links)
 
     except Exception as e:
-        print(f"Error extracting links from {url}: {e}")
+        log_write(f"Error extracting links from {url}: {e}")
         return []
 
 
@@ -336,5 +341,5 @@ def is_valid(url):
             + r"|rm|smil|wmv|swf|wma|zip|rar|gz)$", parsed.path.lower())
 
     except TypeError:
-        print ("TypeError for ", parsed)
+        log_write ("TypeError for ", parsed)
         raise
