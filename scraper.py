@@ -19,6 +19,7 @@ page_word_counts = dict()
 longest_page = [None, 0]
 word_freqs = Counter() 
 subdomains = defaultdict(set)
+redir_dict = defaultdict(int)
 
 
 def is_low_information(resp):
@@ -53,6 +54,7 @@ def is_large(resp):
     if file_size > 10:
         return True
 
+
 def get_stop_words(file):
     stop_words = set()
     with open(filename, "r", encoding="utf-8") as file:
@@ -67,8 +69,22 @@ def scraper(url, resp):
 
     if not is_valid(url):
         return []
-
+    
     parsed = urlparse(url)
+    
+    # Handle redirection
+    # Making sure url is absolute
+    if resp.is_redirect:
+        redirect_url = urljoin(url, resp.headers.get('Location', ''))
+
+        if redir_dict >= REDIRECT_LIMIT and redirect_url in visited:
+            return []
+        
+        redir_dict[url] += 1
+        print(f"Redirecting from {url} to {redirect_url}")
+
+        return redirect_url
+
 
     # Sleep until the politness delay is met
     full_domain = parsed.netloc
@@ -81,38 +97,10 @@ def scraper(url, resp):
     all_last_times[full_domain] = time.time()
 
 
-
     # Defragment and clean to get the base URL
     cleaned_base = f"{parsed.scheme}://{parsed.netloc}{parsed.path}".rstrip("/").lower()
 
-    
-    # Handle redirection
-    redir_num = 0
-    while resp.is_redirect:
-        if redir_num >= REDIRECT_LIMIT:
-            return []
-
-        redirect_url = resp.headers.get('Location')
-        if not redirect_url:
-            break
         
-        # Making sure url is absolute
-        redirect_url = urljoin(url, redirect_url)
-
-        try:
-            resp = requests.get(redirect_url, allow_redirects=False)  
-            parse_url = redirect_url
-            parsed = urlparse(parse_url)  
-            redir_num += 1
-        except requests.RequestException as exception:
-            print(f"Url {redirect_url} has the exception: {exception}")
-            return []
-        
-    parsing = BeautifulSoup(resp.text, 'html.parser')
-    text = parsing.get_text()  
-    print(f"The url {redirect_url} is indexing the text {text[:200]}")
-
-
     # Avoid bad links or previously visited links. 
     if cleaned_base in visited or is_large(resp) or is_low_information(resp) or is_trap(resp, parsed, cleaned_base) or is_duplicate(resp) or resp.status in {403, 404, 500, 503}:
         return []
