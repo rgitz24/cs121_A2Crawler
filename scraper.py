@@ -44,13 +44,41 @@ def is_low_information(resp):
     except Exception:
         return True
 
-def is_trap(resp, parsed, cleaned_defragmented):
-    # How do we indentify traps?????? - - - - - - - - - - - - - 
-    # its a very complicated process cuz there is no right or wrong answer - - - - - - - - - - - - - 
-    return True
+
+def is_trap(parsed):
+    # Depth is too much
+    if parsed.path.count("/") > 6:
+        return True
+
+    # Pagination trap
+    pagination_words = ["page", "p"]
+    query_params = parse_qs(parsed.query.lower())
+    for param in pagination_words:
+        if param in query_params:
+            try:
+                num = int(query_params[param][0])
+                if num > 20:  
+                    return True
+            except ValueError:
+                pass
+
+    # Too many query params
+    if len(query_params) > 4:
+        return True
+
+    # Calendar trap
+    calendar_patterns = [
+        r".*(\d{4})[-/](\d{1,2})[-/](\d{1,2}).*",  
+        r".*(year=\d{4}|month=\d{1,2}|day=\d{1,2}).*", 
+    ]
+    for pattern in calendar_patterns:
+        if re.search(pattern, parsed.path) or re.search(pattern, parsed.query):
+            return True  
+    
+    return False
+
 
 def is_duplicate(resp):
-    # Do only how much the assignment asks for. It doesnt use the word "duplicate" but uses "similarity" in the instructions - - - - - - - - - - - - - 
     try:
         parsing = BeautifulSoup(resp.raw_response.content, "html.parser")
         content = parsing.get_text(separator=" ").strip()
@@ -67,8 +95,8 @@ def is_duplicate(resp):
         print(f"Exception: {exception}")
         return False
 
+
 def is_large(resp):
-    # if greater than 10 MB, too large for us to crawl (converted to mb)- - - - - - - - - - - - - 
     try:
         file_size = resp.headers.get('content-length')
         if file_size is None:
@@ -81,7 +109,6 @@ def is_large(resp):
         return True
     
 
-
 def get_stop_words(file):
     stop_words = set()
     with open(file, "r", encoding="utf-8") as file:
@@ -89,12 +116,17 @@ def get_stop_words(file):
             stop_words.add(line.strip())
     return stop_words
 
+
 def defragment_and_clean(parsed):
     cleaned_defragmented = f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
     if parsed.query: 
         cleaned_defragmented += f"?{parsed.query}"
     cleaned_defragmented = cleaned_defragmented.rstrip("/").lower()
     return cleaned_defragmented
+
+
+
+
 
 
 def scraper(url, resp):
@@ -126,6 +158,7 @@ def scraper(url, resp):
                 return []
         
             redir_dict[redirect_url] += 1
+            redir_dict[url] += 1
             print(f"Redirecting from {url} to {redirect_url}")
 
             return [redirect_url]
@@ -145,7 +178,7 @@ def scraper(url, resp):
 
         
     # Avoid bad links or previously visited links. 
-    if is_large(resp) or is_low_information(resp) or is_trap(resp, parsed, cleaned_defragmented) or is_duplicate(resp) or resp.status in {403, 404, 500, 503}:
+    if is_large(resp) or is_low_information(resp) or is_trap(parsed) or is_duplicate(resp) or resp.status in {403, 404, 500, 503}:
         avoid_urls.add(cleaned_defragmented)
         return []
 
@@ -245,7 +278,7 @@ def is_valid(url):
         
 
         # Don't crawl if these words are in the path or query
-        trap_keys = {"calendar", "sessionid", "sort", "filter", "ref"}  
+        trap_keys = {"calendar", "sessionid"}  
         if any(keyword in parsed_query or keyword in parsed_path for keyword in trap_keys):
             return False
 
@@ -255,11 +288,11 @@ def is_valid(url):
         if any(param in query_params for param in search_keywords):
             return False
 
-        # Don't crawl if these query keys repeat too too much
+        # Don't crawl if these query keys repeat too much
         if "page" in query_params:
             try:
                 page_num = int(query_params.get("page", ["1"])[0])
-                if page_num > 50:  
+                if page_num > 20:  
                     return False
             except ValueError:
                 return False
