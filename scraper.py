@@ -22,7 +22,6 @@ subdomains = defaultdict(set)
 
 
 def is_low_information(resp):
-    #does more links than words also count as low info???? - - - - - - - - - - 
     try:
         soup = BeautifulSoup(resp.raw_response.content, "html.parser")
         text = soup.get_text(separator=" ").strip()
@@ -49,7 +48,7 @@ def is_large(resp):
         file_size = int(resp.headers.get('content-length'))
         file_size = file_size / (1024 * 1024)
         print(file_size)
-    except Exception:
+    except Exception as e:
         return False
     if file_size > 10:
         return True
@@ -115,7 +114,7 @@ def scraper(url, resp):
 
 
     # Avoid bad links or previously visited links. 
-    if cleaned_base in visited or is_low_information(resp) or is_trap(resp, parsed, cleaned_base) or is_duplicate(resp) or is_large(resp):
+    if cleaned_base in visited or is_large(resp) or is_low_information(resp) or is_trap(resp, parsed, cleaned_base) or is_duplicate(resp):
         return []
 
 
@@ -153,6 +152,14 @@ def scraper(url, resp):
             word_frequencies[word] += 1
 
 
+    # Extract valid urls from this page
+    links = extract_next_links(url, resp)
+    return [link for link in links if is_valid(link)]
+
+    
+
+
+
 
 
 
@@ -166,18 +173,61 @@ def extract_next_links(url, resp):
     #         resp.raw_response.url: the url, again
     #         resp.raw_response.content: the content of the page!
     # Return a list with the hyperlinks (as strings) scrapped from resp.raw_response.content
-    return list()
+    
+    if resp.status != 200 or not resp.raw_response:
+        return []
+
+    try:
+        soup = BeautifulSoup(resp.raw_response.content, "html.parser")
+        unique_links = set()  # should we be checking for traps here too and avoid extracting bad links or is that for scraper to handle???- - - - - - - - - -
+
+        for anchor in soup.find_all("a", href=True):
+            relative_link = anchor["href"]
+            absolute_link = urljoin(url, relative_link)
+            absolute_link = absolute_link.split("#")[0]
+            if is_valid(absolute_link): 
+                unique_links.add(absolute_link)
+
+        return list(unique_links)
+
+    except Exception as e:
+        print(f"Error extracting links from {url}: {e}")
+        return []
+
 
 
 
 def is_valid(url):
-    # Decide whether to crawl this url or not. 
-    # If you decide to crawl it, return True; otherwise return False.
-    # There are already some conditions that return False.
     try:
         parsed = urlparse(url)
         if parsed.scheme not in set(["http", "https"]):
             return False
+
+        # Don't crawl if not valid domain
+        allowed_domains = {"ics.uci.edu", "cs.uci.edu", "informatics.uci.edu", "stat.uci.edu"}
+        if parsed.netloc not in allowed_domains and not any(parsed.netloc.endswith("." + domain) for domain in allowed_domains):
+            return False
+
+        # Don't crawl if these words are in the path or query
+        trap_keys = {"calendar", "sessionid", "sort", "filter", "ref"}  
+        if any(keyword in parsed.query.lower() or keyword in parsed.path.lower() for keyword in trap_keys):
+            return False
+
+        # Don't crawl if these words are in the query
+        query_params = parse_qs(parsed.query)
+        search_keywords = {"query", "search", "results"}
+        if any(param in query_params for param in search_keywords):
+            return False
+
+        # Don't crawl if these query keys repeat too too much
+        if "page" in query_params:
+            try:
+                page_num = int(query_params.get("page", ["1"])[0])
+                if page_num > 50:  
+                    return False
+            except ValueError:
+                return False
+
         return not re.match(
             r".*\.(css|js|bmp|gif|jpe?g|ico"
             + r"|png|tiff?|mid|mp2|mp3|mp4"
