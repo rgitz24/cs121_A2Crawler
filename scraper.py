@@ -28,7 +28,7 @@ def is_low_information(resp):
         text = soup.get_text(separator=" ").strip()
         words = text.split()
         low_info = ["login", "signup", "thank-you", "terms-of-service", "privacy-policy"]
-        if any(word in words.lower() for word in low_info):
+        if any(word in resp.url.lower() for word in low_info):
             return True
         return len(words) < 100
     except Exception:
