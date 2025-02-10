@@ -5,6 +5,7 @@ from urllib.parse import parse_qs
 import time
 from collections import defaultdict
 from bs4 import BeautifulSoup
+from collections import Counter
 
 
 
@@ -16,6 +17,8 @@ REDIRECT_LIMIT = 6
 unique_urls = set()
 page_word_counts = dict()
 longest_page = [None, 0]
+word_freqs = Counter() 
+subdomains = defaultdict(set)
 
 
 def is_low_information(resp):
@@ -51,6 +54,13 @@ def is_large(resp):
     if file_size > 10:
         return True
 
+def get_stop_words(file):
+    stop_words = set()
+    with open(filename, "r", encoding="utf-8") as file:
+        for line in file:
+            stop_words.add(line.strip())
+    return stop_words
+
 
 
 
@@ -62,14 +72,14 @@ def scraper(url, resp):
     parsed = urlparse(url)
 
     # Sleep until the politness delay is met
-    authority = parsed.netloc
+    full_domain = parsed.netloc
     global all_last_times
     current_time = time.time()
 
-    last_time = all_last_times[authority]
+    last_time = all_last_times[full_domain]
     if current_time - last_time < DELAY:
         time.sleep(DELAY - (current_time - last_time))
-    all_last_times[authority] = time.time()
+    all_last_times[full_domain] = time.time()
 
 
 
@@ -119,6 +129,9 @@ def scraper(url, resp):
     cleaned_defragmented = cleaned_defragmented.rstrip("/").lower()
     unique_urls.add(cleaned_defragmented)
 
+    # Get subdomain
+    if "ics.uci.edu" in full_domain:
+        subdomains[full_domain].add(cleaned_defragmented)
 
     # Get all words in the page
     soup = BeautifulSoup(resp.raw_response.content, "html.parser")
@@ -133,9 +146,13 @@ def scraper(url, resp):
         longest_page[0] = url
         longest_page[1] = N
 
-    # 50 most common words from all pages
+    # 50 most common words from all pages. 
+    stop_words = get_stop_words("stop_words_list.txt")
+    for word in words:
+        if word not in stop_words:
+            word_frequencies[word] += 1
 
-    # Subdomains
+
 
 
 
