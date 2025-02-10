@@ -11,15 +11,15 @@ from collections import Counter
 
 DELAY = float(config["CRAWLER"]["POLITENESS"])
 all_last_times = defaultdict(int)
-visited = set()
 trap_check = defaultdict(int)
 REDIRECT_LIMIT = 6
-unique_urls = set()
+unique_urls = set() # This means we already visited the url. The urls are all defragmented, which means it counts urls with different fragments as the same.
 page_word_counts = dict()
 longest_page = [None, 0]
 word_freqs = Counter() 
 subdomains = defaultdict(set)
 redir_dict = defaultdict(int)
+avoid_urls = set()
 
 
 def is_low_information(resp):
@@ -34,7 +34,7 @@ def is_low_information(resp):
     except Exception:
         return True
 
-def is_trap(resp, parsed, cleaned_base):
+def is_trap(resp, parsed, cleaned_defragmented):
     # How do we indentify traps?????? - - - - - - - - - - - - - 
     # its a very complicated process cuz there is no right or wrong answer - - - - - - - - - - - - - 
     return True
@@ -46,23 +46,31 @@ def is_duplicate(resp):
 def is_large(resp):
     # if greater than 10 MB, too large for us to crawl (converted to mb)- - - - - - - - - - - - - 
     try:
-        file_size = int(resp.headers.get('content-length'))
-        file_size = file_size / (1024 * 1024)
+        file_size = resp.headers.get('content-length')
+        if file_size is None:
+            return True
+        file_size = int(file_size) / (1024 * 1024)
         print(file_size)
+        if file_size > 10:
+            return True
     except Exception as e:
         return True
-    if file_size > 10:
-        return True
+    
 
 
 def get_stop_words(file):
     stop_words = set()
-    with open(filename, "r", encoding="utf-8") as file:
+    with open(file, "r", encoding="utf-8") as file:
         for line in file:
             stop_words.add(line.strip())
     return stop_words
 
-
+def defragment_and_clean(parsed):
+    cleaned_defragmented = f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
+    if parsed.query: 
+        cleaned_defragmented += f"?{parsed.query}"
+    cleaned_defragmented = cleaned_defragmented.rstrip("/").lower()
+    return cleaned_defragmented
 
 
 def scraper(url, resp):
@@ -71,19 +79,34 @@ def scraper(url, resp):
         return []
     
     parsed = urlparse(url)
+
+    # Get defragmented URL
+    cleaned_defragmented = defragment_and_clean(parsed)
+
+    if cleaned_defragmented in unique_urls or cleaned_defragmented in avoid_urls:
+        return []
     
     # Handle redirection
     # Making sure url is absolute
     if resp.is_redirect:
-        redirect_url = urljoin(url, resp.headers.get('Location', ''))
+        location = resp.headers.get('Location')
+        if location:
+            redirect_url = urljoin(url, location)
+            parsed_redirect = urlparse(redirect_url)
+            redirect_url = defragment_and_clean(parsed_redirect)
 
-        if redir_dict >= REDIRECT_LIMIT and redirect_url in visited:
-            return []
+            if redir_dict.get(redirect_url, 0) >= REDIRECT_LIMIT:
+                avoid_urls.add(redirect_url)
+                return []
+            if redirect_url in unique_urls:
+                return []
         
-        redir_dict[url] += 1
-        print(f"Redirecting from {url} to {redirect_url}")
+            redir_dict[redirect_url] += 1
+            print(f"Redirecting from {url} to {redirect_url}")
 
-        return redirect_url
+            return [redirect_url]
+        else:
+            return []
 
 
     # Sleep until the politness delay is met
@@ -96,25 +119,14 @@ def scraper(url, resp):
         time.sleep(DELAY - (current_time - last_time))
     all_last_times[full_domain] = time.time()
 
-
-    # Defragment and clean to get the base URL
-    cleaned_base = f"{parsed.scheme}://{parsed.netloc}{parsed.path}".rstrip("/").lower()
-
         
     # Avoid bad links or previously visited links. 
-    if cleaned_base in visited or is_large(resp) or is_low_information(resp) or is_trap(resp, parsed, cleaned_base) or is_duplicate(resp) or resp.status in {403, 404, 500, 503}:
+    if is_large(resp) or is_low_information(resp) or is_trap(resp, parsed, cleaned_defragmented) or is_duplicate(resp) or resp.status in {403, 404, 500, 503}:
+        avoid_urls.add(cleaned_defragmented)
         return []
 
-
-    # Track as visited
-    visited.add(cleaned_base)
-
-    # Add the defragmented URL to the unique set. Only inserts if unique.
-    cleaned_defragmented = f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
-    if parsed.query: 
-        cleaned_defragmented += f"?{parsed.query}"
-    cleaned_defragmented = cleaned_defragmented.rstrip("/").lower()
     unique_urls.add(cleaned_defragmented)
+
 
     # Get subdomain
     if "ics.uci.edu" in full_domain:
@@ -130,14 +142,14 @@ def scraper(url, resp):
     if words:
         N = len(words)
     if N > longest_page[1]:
-        longest_page[0] = url # Should this be url or resp.url
+        longest_page[0] = url
         longest_page[1] = N
 
     # 50 most common words from all pages. 
     stop_words = get_stop_words("stop_words_list.txt")
     for word in words:
         if word not in stop_words:
-            word_frequencies[word] += 1
+            word_freqs[word] += 1
 
 
     # Extract valid urls from this page
@@ -173,7 +185,7 @@ def extract_next_links(url, resp):
             relative_link = anchor["href"]
             absolute_link = urljoin(url, relative_link)
             absolute_link = absolute_link.split("#")[0]
-            if is_valid(absolute_link): 
+            if is_valid(absolute_link) and absolute_link not in avoid_urls: 
                 unique_links.add(absolute_link)
 
         return list(unique_links)
@@ -190,6 +202,9 @@ def is_valid(url):
         parsed = urlparse(url)
         if parsed.scheme not in set(["http", "https"]):
             return False
+        
+        if url in avoid_urls:
+            return False
 
         parsed_netloc = parsed.netloc.lower()
         parsed_path = parsed.path.lower()
@@ -197,8 +212,13 @@ def is_valid(url):
 
         # Don't crawl if not valid domain
         allowed_domains = {"ics.uci.edu", "cs.uci.edu", "informatics.uci.edu", "stat.uci.edu"}
-        if parsed_netloc not in allowed_domains and not any(parsed_netloc.endswith("." + domain) for domain in allowed_domains):
+        parts = parsed_netloc.split(".")
+        if len(parts) < 3:
             return False
+        domain = ".".join(parts[-3:])
+        if domain not in allowed_domains:
+            return False
+        
 
         # Don't crawl if these words are in the path or query
         trap_keys = {"calendar", "sessionid", "sort", "filter", "ref"}  
@@ -229,8 +249,6 @@ def is_valid(url):
             + r"|epub|dll|cnf|tgz|sha1"
             + r"|thmx|mso|arff|rtf|jar|csv"
             + r"|rm|smil|wmv|swf|wma|zip|rar|gz)$", parsed.path.lower())
-
-        return True
 
     except TypeError:
         print ("TypeError for ", parsed)
