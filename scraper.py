@@ -342,7 +342,7 @@ def is_valid(url):
         domain = ".".join(parts[-3:])
         if domain not in allowed_domains:
             return False
-        log_write(f"Passed valid domain check")
+        log_write(f"Passed valid domain check. Domain is {parsed.netloc}")
         
 
         # Don't crawl if these words are in the path or query
