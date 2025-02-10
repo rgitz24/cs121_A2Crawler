@@ -7,10 +7,17 @@ from collections import defaultdict
 from bs4 import BeautifulSoup
 from collections import Counter
 from simhash import Simhash
+import configparser
 
 
 
-DELAY = float(config["CRAWLER"]["POLITENESS"])
+config = configparser.ConfigParser()
+config.read("config.ini")
+try:
+    DELAY = float(config["CRAWLER"]["POLITENESS"])
+except KeyError as e:
+    raise KeyError(f"Missing key in config.ini")
+
 all_last_times = defaultdict(int)
 trap_check = defaultdict(int)
 REDIRECT_LIMIT = 6
