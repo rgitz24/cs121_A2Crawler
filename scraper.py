@@ -49,7 +49,7 @@ def is_large(resp):
         file_size = file_size / (1024 * 1024)
         print(file_size)
     except Exception as e:
-        return False
+        return True
     if file_size > 10:
         return True
 
@@ -114,7 +114,7 @@ def scraper(url, resp):
 
 
     # Avoid bad links or previously visited links. 
-    if cleaned_base in visited or is_large(resp) or is_low_information(resp) or is_trap(resp, parsed, cleaned_base) or is_duplicate(resp):
+    if cleaned_base in visited or is_large(resp) or is_low_information(resp) or is_trap(resp, parsed, cleaned_base) or is_duplicate(resp) or resp.status in {403, 404, 500, 503}:
         return []
 
 
@@ -142,7 +142,7 @@ def scraper(url, resp):
     if words:
         N = len(words)
     if N > longest_page[1]:
-        longest_page[0] = url
+        longest_page[0] = url # Should this be url or resp.url
         longest_page[1] = N
 
     # 50 most common words from all pages. 
@@ -203,18 +203,22 @@ def is_valid(url):
         if parsed.scheme not in set(["http", "https"]):
             return False
 
+        parsed_netloc = parsed.netloc.lower()
+        parsed_path = parsed.path.lower()
+        parsed_query = parsed.query.lower()
+
         # Don't crawl if not valid domain
         allowed_domains = {"ics.uci.edu", "cs.uci.edu", "informatics.uci.edu", "stat.uci.edu"}
-        if parsed.netloc not in allowed_domains and not any(parsed.netloc.endswith("." + domain) for domain in allowed_domains):
+        if parsed_netloc not in allowed_domains and not any(parsed_netloc.endswith("." + domain) for domain in allowed_domains):
             return False
 
         # Don't crawl if these words are in the path or query
         trap_keys = {"calendar", "sessionid", "sort", "filter", "ref"}  
-        if any(keyword in parsed.query.lower() or keyword in parsed.path.lower() for keyword in trap_keys):
+        if any(keyword in parsed_query or keyword in parsed_path for keyword in trap_keys):
             return False
 
         # Don't crawl if these words are in the query
-        query_params = parse_qs(parsed.query)
+        query_params = {key.lower(): value for key, value in parse_qs(parsed.query).items()}
         search_keywords = {"query", "search", "results"}
         if any(param in query_params for param in search_keywords):
             return False
@@ -237,6 +241,8 @@ def is_valid(url):
             + r"|epub|dll|cnf|tgz|sha1"
             + r"|thmx|mso|arff|rtf|jar|csv"
             + r"|rm|smil|wmv|swf|wma|zip|rar|gz)$", parsed.path.lower())
+
+        return True
 
     except TypeError:
         print ("TypeError for ", parsed)
