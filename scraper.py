@@ -32,6 +32,34 @@ simhash_storage = {}
 avoid_urls = set()
 
 
+def print_report():
+
+    print("\n\n\n")
+    print("----------------###### Crawler Report ######----------------")
+    print("\n\n")
+    
+    unique_pages_count = len(unique_urls)
+    print(f"Number of unique pages found: {unique_pages_count}\n\n")
+
+    print(f"Longest page url: {longest_page[0]}   Word count: {longest_page[1]}\n\n")
+
+    top_50 = word_freqs.most_common(50)
+    for word, freq in top_50:
+        print(f"{word} {freq}")
+    print("\n\n")
+
+    sorted_subdomains = sorted(subdomains.keys())
+    print(f"Subdomains count: {len(sorted_subdomains)}")
+    for subdomain in sorted_subdomains:
+        print(f"{subdomain}, {len(subdomains[subdomain])}")
+
+    print("\n\n")
+    print("----------------############################----------------")
+    print("\n\n\n")
+
+
+    
+
 def is_low_information(resp):
     try:
         soup = BeautifulSoup(resp.raw_response.content, "html.parser")
