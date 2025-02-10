@@ -87,7 +87,7 @@ def scraper(url, resp):
     cleaned_base = f"{parsed.scheme}://{parsed.netloc}{parsed.path}".rstrip("/").lower()
 
     
-    # How to handle redirection ????? - - - - - - - - - - - - - - - - - -
+    # Handle redirection
     redir_num = 0
     while resp.is_redirect:
         if redir_num >= REDIRECT_LIMIT:
