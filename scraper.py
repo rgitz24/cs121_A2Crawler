@@ -1,5 +1,4 @@
 import re
-import requests
 from urllib.parse import urlparse, urljoin
 from urllib.parse import parse_qs
 import time
@@ -38,7 +37,7 @@ def log_write(message):
 
 def print_report():
 
-    print("\n\n\n")
+    print("\n")
     print("----------------###### Crawler Report ######----------------")
     print("\n\n")
     
@@ -59,7 +58,7 @@ def print_report():
 
     print("\n\n")
     print("----------------############################----------------")
-    print("\n\n\n")
+    print("\n")
 
 
     
@@ -72,7 +71,6 @@ def is_low_information(resp):
         low_info = ["login", "signup", "thank-you", "terms-of-service", "privacy-policy"]
         if any(word in resp.url.lower() for word in low_info):
             return True
-        log_write(f"Exiting is_low_info")
         return len(words) < 100
     except Exception as e:
         log_write(f"Error with Beautful Soup when checking low information: {e}")
@@ -81,12 +79,9 @@ def is_low_information(resp):
 
 def is_trap(parsed):
     # Depth is too much
-    log_write(f"Entered trap check, ")
     if parsed.path.count("/") > 6:
-        log_write(f"Trap detected: URL has too many path segments")
         return True
 
-    log_write(f"Depth check, ")
     # Pagination trap
     pagination_words = ["page", "p"]
     query_params = parse_qs(parsed.query.lower())
@@ -95,18 +90,14 @@ def is_trap(parsed):
             try:
                 num = int(query_params[param][0])
                 if num > 20:
-                    log_write(f"Trap detected: pagination")  
                     return True
             except ValueError:
                 pass
 
-    log_write(f"params check, ")
     # Too many query params
     if len(query_params) > 4:
-        log_write(f"Trap detected: Too many query parameters")
         return True
 
-    log_write(f"calendar check, ")
     # Calendar trap
     calendar_patterns = [
         r".*(\d{4})[-/](\d{1,2})[-/](\d{1,2}).*",  
@@ -114,7 +105,6 @@ def is_trap(parsed):
     ]
     for pattern in calendar_patterns:
         if re.search(pattern, parsed.path) or re.search(pattern, parsed.query):
-            log_write(f"Trap detected: Calendar")
             return True  
     
     log_write(f"Exiting is_trap")
@@ -126,13 +116,12 @@ def is_duplicate(resp):
         parsing = BeautifulSoup(resp.raw_response.content, "html.parser")
         content = parsing.get_text(separator=" ").strip()
         simhash = Simhash(content)
-        for url_prev, simhash_prev in simhash_storage.items():
+        for url_prev, simhash_prev in list(simhash_storage.items()):
             if simhash.distance(simhash_prev) < 5: 
                 log_write(f"Similarity between resp.url: {resp.url} and prev_url: {url_prev}")
                 return True
 
         simhash_storage[resp.url] = simhash
-        log_write(f"Entering is_duplicate")
         return False
 
     except Exception as exception:
@@ -142,13 +131,14 @@ def is_duplicate(resp):
 
 def is_large(resp):
     try:
-        file_size = resp.headers.get('content-length')
-        if file_size is None:
+        if resp.raw_response.content:
+            file_size = len(resp.raw_response.content)
+        else:
+            log_write(f"No file size attainable")
             return True
         file_size = int(file_size) / (1024 * 1024)
         log_write(f"File size of {resp.url}: {file_size:.2f} MB")
         if file_size > 10:
-            log_write(f"Exiting is_large")
             return True
     except Exception as e:
         log_write(f"Error in is_large: {e}")
@@ -185,7 +175,7 @@ def scraper(url, resp):
 
     # Get defragmented URL
     cleaned_defragmented = defragment_and_clean(parsed)
-    log_write(f"cleaned_defragmented: {cleaned_defragmented}")
+    log_write(f"Cleaned_defragmented URL: {cleaned_defragmented}")
 
     if cleaned_defragmented in unique_urls or cleaned_defragmented in avoid_urls:
         log_write(f"Skipping already visited or avoided URL: {cleaned_defragmented}")
@@ -193,13 +183,15 @@ def scraper(url, resp):
     
     # Handle redirection
     # Making sure url is absolute
-    if resp.is_redirect:
+
+    if resp.status in {301, 302, 303, 307, 308}:
+        log_write(f"Handling redirection")
         location = resp.headers.get('Location')
         if location:
             redirect_url = urljoin(url, location)
             parsed_redirect = urlparse(redirect_url)
             redirect_url = defragment_and_clean(parsed_redirect)
-            log_write(f"redirect url cleaned_defragmented: {redirect_url}\n")
+            log_write(f"Redirect url cleaned_defragmented: {redirect_url}\n")
             
 
             if redir_dict.get(redirect_url, 0) >= REDIRECT_LIMIT:
@@ -217,31 +209,26 @@ def scraper(url, resp):
             return []
 
 
+    
     # Sleep until the politness delay is met
     full_domain = parsed.netloc
     global all_last_times
     current_time = time.time()
-    log_write(f"Current time: {current_time}")
 
     last_time = all_last_times[full_domain]
-    log_write(f"Last time: {last_time}")
     if current_time - last_time < DELAY:
         log_write(f"Sleep time: {DELAY - (current_time - last_time)}")
         time.sleep(DELAY - (current_time - last_time))
-    log_write(f"After sleep time: {time.time()}")
     all_last_times[full_domain] = time.time()
 
         
     # Avoid bad links or previously visited links.
-    log_write(f"Entering bad link check in scraper")
     if is_large(resp) or is_low_information(resp) or is_trap(parsed) or is_duplicate(resp) or resp.status in {403, 404, 500, 503}:
         avoid_urls.add(cleaned_defragmented)
-        log_write(f"Exiting bad link check in scraper")
+        log_write(f"Bad link found in check in scraper")
         return []
 
     unique_urls.add(cleaned_defragmented)
-    log_write(f"Processing URL: {cleaned_defragmented}")
-
 
     # Get subdomain
     if "ics.uci.edu" in full_domain:
@@ -273,9 +260,7 @@ def scraper(url, resp):
 
 
     # Extract valid urls from this page
-    log_write(f"Entering extract_next_links")
     links = extract_next_links(url, resp)
-    log_write(f"Exited extract_next_links")
     return [link for link in links if is_valid(link)]
 
     
@@ -321,7 +306,6 @@ def extract_next_links(url, resp):
 
 
 def is_valid(url):
-    log_write(f"Entered is_valid with URL: {url}")
     try:
         parsed = urlparse(url)
         if parsed.scheme not in set(["http", "https"]):
@@ -342,21 +326,20 @@ def is_valid(url):
         domain = ".".join(parts[-3:])
         if domain not in allowed_domains:
             return False
-        log_write(f"Passed valid domain check. Domain is {parsed.netloc}")
-        
+
+        if "wiki.ics.uci.edu" in parsed_netloc:
+            return False        
 
         # Don't crawl if these words are in the path or query
-        trap_keys = {"calendar", "sessionid"}  
+        trap_keys = {"calendar", "sessionid", "events"}  
         if any(keyword in parsed_query or keyword in parsed_path for keyword in trap_keys):
             return False
-        log_write(f"Passed word check")
 
         # Don't crawl if these words are in the query
         query_params = {key.lower(): value for key, value in parse_qs(parsed.query).items()}
         search_keywords = {"query", "search", "results"}
         if any(param in query_params for param in search_keywords):
             return False
-        log_write(f"Passed query param check")
 
         # Don't crawl if these query keys repeat too much
         if "page" in query_params:
@@ -366,8 +349,6 @@ def is_valid(url):
                     return False
             except ValueError:
                 return False
-        log_write(f"Passed page repetition check")
-        log_write(f"Exiting is_valid")
 
         return not re.match(
             r".*\.(css|js|bmp|gif|jpe?g|ico"
