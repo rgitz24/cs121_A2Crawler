@@ -278,7 +278,7 @@ def is_valid(url):
         parsed_path = parsed.path.lower()
         parsed_query = parsed.query.lower()
 
-        if "wiki.ics.uci.edu" in parsed_netloc or "sli.ics.uci.edu":
+        if "wiki.ics.uci.edu" in parsed_netloc or "sli.ics.uci.edu" in parsed_netloc:
             return False
 
         # Don't crawl if not valid domain
