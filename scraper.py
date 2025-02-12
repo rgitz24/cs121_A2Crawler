@@ -37,78 +37,41 @@ def log_write(message):
 
 def print_report():
 
-    print("\n")
-    print("----------------###### Crawler Report ######----------------")
-    print("\n\n")
+    log_write(" ")
+    log_write("----------------###### Crawler Report ######----------------\n")
     
     unique_pages_count = len(unique_urls)
-    print(f"Number of unique pages found: {unique_pages_count}\n\n")
+    log_write(f"Number of unique pages found: {unique_pages_count}\n")
 
-    print(f"Longest page url: {longest_page[0]}   Word count: {longest_page[1]}\n\n")
+    log_write(f"Longest page url: {longest_page[0]}   Word count: {longest_page[1]}\n")
 
     top_50 = word_freqs.most_common(50)
     for word, freq in top_50:
-        print(f"{word} {freq}")
-    print("\n\n")
+        log_write(f"{word} {freq}")
+    log_write("\n")
 
     sorted_subdomains = sorted(subdomains.keys())
-    print(f"Subdomains count: {len(sorted_subdomains)}")
+    log_write(f"Subdomains count: {len(sorted_subdomains)}")
     for subdomain in sorted_subdomains:
-        print(f"{subdomain}, {len(subdomains[subdomain])}")
+        log_write(f"{subdomain}, {len(subdomains[subdomain])}")
 
-    print("\n\n")
-    print("----------------############################----------------")
-    print("\n")
+    log_write("\n")
+    log_write("----------------############################----------------")
 
 
     
 
 def is_low_information(resp):
     try:
-        soup = BeautifulSoup(resp.raw_response.content, "html.parser")
-        text = soup.get_text(separator=" ").strip()
-        words = text.split()
-        low_info = ["login", "signup", "thank-you", "terms-of-service", "privacy-policy"]
-        if any(word in resp.url.lower() for word in low_info):
-            return True
-        return len(words) < 100
+        if resp.raw_response and resp.raw_response.content:
+            soup = BeautifulSoup(resp.raw_response.content, "html.parser")
+            text = soup.get_text(separator=" ").strip()
+            words = text.split()
+            return len(words) < 100
+        return True
     except Exception as e:
         log_write(f"Error with Beautful Soup when checking low information: {e}")
         return True
-
-
-def is_trap(parsed):
-    # Depth is too much
-    if parsed.path.count("/") > 6:
-        return True
-
-    # Pagination trap
-    pagination_words = ["page", "p"]
-    query_params = parse_qs(parsed.query.lower())
-    for param in pagination_words:
-        if param in query_params:
-            try:
-                num = int(query_params[param][0])
-                if num > 20:
-                    return True
-            except ValueError:
-                pass
-
-    # Too many query params
-    if len(query_params) > 4:
-        return True
-
-    # Calendar trap
-    calendar_patterns = [
-        r".*(\d{4})[-/](\d{1,2})[-/](\d{1,2}).*",  
-        r".*(year=\d{4}|month=\d{1,2}|day=\d{1,2}).*", 
-    ]
-    for pattern in calendar_patterns:
-        if re.search(pattern, parsed.path) or re.search(pattern, parsed.query):
-            return True  
-    
-    log_write(f"Exiting is_trap")
-    return False
 
 
 def is_duplicate(resp):
@@ -131,15 +94,17 @@ def is_duplicate(resp):
 
 def is_large(resp):
     try:
-        if resp.raw_response.content:
-            file_size = len(resp.raw_response.content)
-        else:
-            log_write(f"No file size attainable")
+        file_size = None
+        if resp.raw_response:
+            if resp.raw_response.content:
+                file_size = len(resp.raw_response.content)
+                file_size = int(file_size) / (1024 * 1024)
+                log_write(f"File size of {resp.url}: {file_size:.2f} MB")
+                if file_size > 10:
+                    return True
+        if file_size is None:
             return True
-        file_size = int(file_size) / (1024 * 1024)
-        log_write(f"File size of {resp.url}: {file_size:.2f} MB")
-        if file_size > 10:
-            return True
+        return False
     except Exception as e:
         log_write(f"Error in is_large: {e}")
         return True
@@ -167,9 +132,6 @@ def defragment_and_clean(parsed):
 
 
 def scraper(url, resp):
-
-    if not is_valid(url):
-        return []
     
     parsed = urlparse(url)
 
@@ -183,7 +145,6 @@ def scraper(url, resp):
     
     # Handle redirection
     # Making sure url is absolute
-
     if resp.status in {301, 302, 303, 307, 308}:
         log_write(f"Handling redirection")
         location = resp.headers.get('Location')
@@ -193,7 +154,6 @@ def scraper(url, resp):
             redirect_url = defragment_and_clean(parsed_redirect)
             log_write(f"Redirect url cleaned_defragmented: {redirect_url}\n")
             
-
             if redir_dict.get(redirect_url, 0) >= REDIRECT_LIMIT:
                 avoid_urls.add(redirect_url)
                 return []
@@ -223,14 +183,14 @@ def scraper(url, resp):
 
         
     # Avoid bad links or previously visited links.
-    if is_large(resp) or is_low_information(resp) or is_trap(parsed) or is_duplicate(resp) or resp.status in {403, 404, 500, 503}:
+    if resp.status in {403, 404, 500, 503} or is_low_information(resp) or is_large(resp) or is_duplicate(resp):
         avoid_urls.add(cleaned_defragmented)
         log_write(f"Bad link found in check in scraper")
         return []
 
     unique_urls.add(cleaned_defragmented)
 
-    # Get subdomain
+    # Get ics.uci.edu subdomains
     if "ics.uci.edu" in full_domain:
         subdomains[full_domain].add(cleaned_defragmented)
 
@@ -238,7 +198,7 @@ def scraper(url, resp):
     try:
         soup = BeautifulSoup(resp.raw_response.content, "html.parser")
         text = soup.get_text(separator=" ")
-        words = re.findall(r'\b[a-zA-Z]{1,}\b', text.lower())
+        words = re.findall(r'\b[a-zA-Z]{2,}\b', text.lower())
     except Exception as e:
         log_write(f"Error getting all words from the page: {e}")
         words = []
@@ -261,7 +221,7 @@ def scraper(url, resp):
 
     # Extract valid urls from this page
     links = extract_next_links(url, resp)
-    return [link for link in links if is_valid(link)]
+    return links
 
     
 
@@ -282,18 +242,17 @@ def extract_next_links(url, resp):
     # Return a list with the hyperlinks (as strings) scrapped from resp.raw_response.content
     
     if resp.status != 200 or not resp.raw_response:
-        log_write(f"{url} has bad status: {resp.status}")
         return []
 
     try:
         soup = BeautifulSoup(resp.raw_response.content, "html.parser")
-        unique_links = set()  # should we be checking for traps here too and avoid extracting bad links or is that for scraper to handle???- - - - - - - - - -
+        unique_links = set()
 
         for anchor in soup.find_all("a", href=True):
             relative_link = anchor["href"]
             absolute_link = urljoin(url, relative_link)
             absolute_link = absolute_link.split("#")[0]
-            if is_valid(absolute_link) and absolute_link not in avoid_urls: 
+            if is_valid(absolute_link): 
                 unique_links.add(absolute_link)
         log_write(f"Extracted {len(unique_links)} unique valid links from {url}")
         return list(unique_links)
@@ -308,15 +267,19 @@ def extract_next_links(url, resp):
 def is_valid(url):
     try:
         parsed = urlparse(url)
+
         if parsed.scheme not in set(["http", "https"]):
             return False
         
-        if url in avoid_urls:
+        if url in avoid_urls or url in unique_urls:
             return False
 
         parsed_netloc = parsed.netloc.lower()
         parsed_path = parsed.path.lower()
         parsed_query = parsed.query.lower()
+
+        if "wiki.ics.uci.edu" in parsed_netloc or "sli.ics.uci.edu":
+            return False
 
         # Don't crawl if not valid domain
         allowed_domains = {"ics.uci.edu", "cs.uci.edu", "informatics.uci.edu", "stat.uci.edu"}
@@ -325,36 +288,63 @@ def is_valid(url):
             return False
         domain = ".".join(parts[-3:])
         if domain not in allowed_domains:
+            return False       
+
+
+        # Don't crawl if these words are in the path
+        trap_keys = {"calendar", "sessionid", "events", "wiki", "login", "brochure"}  
+        if any(keyword in parsed_path for keyword in trap_keys):
             return False
 
-        if "wiki.ics.uci.edu" in parsed_netloc:
-            return False        
 
-        # Don't crawl if these words are in the path or query
-        trap_keys = {"calendar", "sessionid", "events"}  
-        if any(keyword in parsed_query or keyword in parsed_path for keyword in trap_keys):
+        # Don't crawl if these words are in the query keys
+        query_params = parse_qs(parsed_query, keep_blank_values=True)
+        search_keywords = {"share", "search", "calendar", "sessionid", "events"}
+        for key, values in query_params.items():
+            if key in search_keywords or key.startswith("filter"):
+                return False
+            for val in values:
+                if any(keyword in val for keyword in search_keywords):
+                    return False  
+
+
+        # Depth is too much
+        if parsed.path.count("/") > 9:
             return False
+        
 
-        # Don't crawl if these words are in the query
-        query_params = {key.lower(): value for key, value in parse_qs(parsed.query).items()}
-        search_keywords = {"query", "search", "results"}
-        if any(param in query_params for param in search_keywords):
+        # Too many query params
+        if len(query_params) > 9:
             return False
+        
 
-        # Don't crawl if these query keys repeat too much
-        if "page" in query_params:
-            try:
-                page_num = int(query_params.get("page", ["1"])[0])
-                if page_num > 20:  
-                    return False
-            except ValueError:
+        # Calendar trap
+        calendar_patterns = [
+            r".*(\d{4})[-/](\d{1,2})[-/](\d{1,2}).*",  
+            r".*(year=\d{4}|month=\d{1,2}|day=\d{1,2}).*", 
+        ]
+        for pattern in calendar_patterns:
+            if re.search(pattern, parsed.query):
                 return False
 
+
+        # # Pagination trap
+        # pagination_words = ["page", "p"]
+        # for param in pagination_words:
+        #     if param in query_params:
+        #         try:
+        #             num = int(query_params[param][0])
+        #             if num > 20:
+        #                 return False
+        #         except ValueError:
+        #             pass
+
+
         return not re.match(
-            r".*\.(css|js|bmp|gif|jpe?g|ico"
+            r".*\.(apk|css|js|bmp|gif|jpe?g|ico|img"
             + r"|png|tiff?|mid|mp2|mp3|mp4"
             + r"|wav|avi|mov|mpeg|ram|m4v|mkv|ogg|ogv|pdf"
-            + r"|ps|eps|tex|ppt|pptx|doc|docx|xls|xlsx|names"
+            + r"|ps|eps|tex|pps|ppt|ppsx|pptx|doc|docx|xls|xlsx|names"
             + r"|data|dat|exe|bz2|tar|msi|bin|7z|psd|dmg|iso"
             + r"|epub|dll|cnf|tgz|sha1"
             + r"|thmx|mso|arff|rtf|jar|csv"
