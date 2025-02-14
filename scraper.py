@@ -132,7 +132,7 @@ def defragment_and_clean(parsed):
 
 
 def scraper(url, resp):
-    
+
     parsed = urlparse(url)
 
     # Get defragmented URL
@@ -141,6 +141,14 @@ def scraper(url, resp):
 
     if cleaned_defragmented in unique_urls or cleaned_defragmented in avoid_urls:
         log_write(f"Skipping already visited or avoided URL: {cleaned_defragmented}")
+        return []
+    
+    if resp.status == 200:
+        unique_urls.add(cleaned_defragmented)
+
+    if not is_valid(url) or resp.status in {403, 404, 500, 503}:
+        avoid_urls.add(cleaned_defragmented)
+        log_write(f"Bad link found in check in scraper")
         return []
     
     # Handle redirection
@@ -183,12 +191,11 @@ def scraper(url, resp):
 
         
     # Avoid bad links or previously visited links.
-    if resp.status in {403, 404, 500, 503} or is_low_information(resp) or is_large(resp) or is_duplicate(resp):
+    if is_low_information(resp) or is_large(resp) or is_duplicate(resp):
         avoid_urls.add(cleaned_defragmented)
         log_write(f"Bad link found in check in scraper")
         return []
 
-    unique_urls.add(cleaned_defragmented)
 
     # Get ics.uci.edu subdomains
     if "ics.uci.edu" in full_domain:
@@ -240,22 +247,21 @@ def extract_next_links(url, resp):
     #         resp.raw_response.url: the url, again
     #         resp.raw_response.content: the content of the page!
     # Return a list with the hyperlinks (as strings) scrapped from resp.raw_response.content
-    
+
     if resp.status != 200 or not resp.raw_response:
         return []
 
     try:
         soup = BeautifulSoup(resp.raw_response.content, "html.parser")
-        unique_links = set()
+        extracted = set()
 
         for anchor in soup.find_all("a", href=True):
             relative_link = anchor["href"]
             absolute_link = urljoin(url, relative_link)
             absolute_link = absolute_link.split("#")[0]
-            if is_valid(absolute_link): 
-                unique_links.add(absolute_link)
-        log_write(f"Extracted {len(unique_links)} unique valid links from {url}")
-        return list(unique_links)
+            extracted.add(absolute_link)
+        log_write(f"Extracted {len(extracted)} unique valid links from {url}")
+        return list(extracted)
 
     except Exception as e:
         log_write(f"Error extracting links from {url}: {e}")
@@ -269,9 +275,6 @@ def is_valid(url):
         parsed = urlparse(url)
 
         if parsed.scheme not in set(["http", "https"]):
-            return False
-        
-        if url in avoid_urls or url in unique_urls:
             return False
 
         parsed_netloc = parsed.netloc.lower()
@@ -309,12 +312,12 @@ def is_valid(url):
 
 
         # Depth is too much
-        if parsed.path.count("/") > 9:
+        if parsed.path.count("/") > 6:
             return False
         
 
         # Too many query params
-        if len(query_params) > 9:
+        if len(query_params) > 4:
             return False
         
 
