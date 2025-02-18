@@ -20,7 +20,7 @@ except KeyError as e:
 all_last_times = defaultdict(int)
 trap_check = defaultdict(int)
 REDIRECT_LIMIT = 6
-unique_urls = set() # This means we already visited the url. The urls are all defragmented, which means it counts urls with different fragments as the same.
+unique_urls = set() 
 page_word_counts = dict()
 longest_page = [None, 0]
 word_freqs = Counter() 
@@ -29,19 +29,25 @@ redir_dict = defaultdict(int)
 simhash_storage = {}
 avoid_urls = set()
 LOG_FILE = "log.txt"
+unique_valid_urls = set()
 
+# Monitors the crawler
 def log_write(message):
     print(message)
     with open(LOG_FILE, "a", encoding="utf-8") as log_file:
         log_file.write(message + "\n")
 
+# Prints the final report questions in the log file
 def print_report():
 
     log_write(" ")
     log_write("----------------###### Crawler Report ######----------------\n")
     
     unique_pages_count = len(unique_urls)
-    log_write(f"Number of unique pages found: {unique_pages_count}\n")
+    log_write(f"Number of unique urls, without any filtering, found: {unique_pages_count}\n")
+
+    unique_valid_urls_count = len(unique_valid_urls)
+    log_write(f"Number of unique urls, after filtering, found: {unique_valid_urls_count}\n")
 
     log_write(f"Longest page url: {longest_page[0]}   Word count: {longest_page[1]}\n")
 
@@ -60,7 +66,7 @@ def print_report():
 
 
     
-
+# Checks if the page has less than a 100 words
 def is_low_information(resp):
     try:
         if resp.raw_response and resp.raw_response.content:
@@ -74,6 +80,7 @@ def is_low_information(resp):
         return True
 
 
+# Checks if there is a similar page already crawled using simhash
 def is_duplicate(resp):
     try:
         parsing = BeautifulSoup(resp.raw_response.content, "html.parser")
@@ -92,6 +99,7 @@ def is_duplicate(resp):
         return False
 
 
+# Checks if the page is too big, bigger than 10 MB. If there is no size information, then assumes the page is too big.
 def is_large(resp):
     try:
         file_size = None
@@ -110,6 +118,7 @@ def is_large(resp):
         return True
     
 
+# Parses a file of stop words and returns them in a set
 def get_stop_words(file):
     stop_words = set()
     try:
@@ -123,6 +132,7 @@ def get_stop_words(file):
         log_write(f"Error reading stop words file: {e}")
 
 
+# Returns the parsed url without the fragment and lowercases everything
 def defragment_and_clean(parsed):
     cleaned_defragmented = f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
     if parsed.query: 
@@ -135,21 +145,14 @@ def scraper(url, resp):
 
     parsed = urlparse(url)
 
-    # Get defragmented URL
+    # Get lowercased and defragmented URL
     cleaned_defragmented = defragment_and_clean(parsed)
     log_write(f"Cleaned_defragmented URL: {cleaned_defragmented}")
 
-    if cleaned_defragmented in unique_urls or cleaned_defragmented in avoid_urls:
+    if cleaned_defragmented in avoid_urls:
         log_write(f"Skipping already visited or avoided URL: {cleaned_defragmented}")
         return []
-    
-    if resp.status == 200:
-        unique_urls.add(cleaned_defragmented)
 
-    if not is_valid(url) or resp.status in {403, 404, 500, 503}:
-        avoid_urls.add(cleaned_defragmented)
-        log_write(f"Bad link found in check in scraper")
-        return []
     
     # Handle redirection
     # Making sure url is absolute
@@ -191,14 +194,16 @@ def scraper(url, resp):
 
         
     # Avoid bad links or previously visited links.
-    if is_low_information(resp) or is_large(resp) or is_duplicate(resp):
+    if resp.status in {403, 404, 500, 503} or is_low_information(resp) or is_large(resp) or is_duplicate(resp):
         avoid_urls.add(cleaned_defragmented)
         log_write(f"Bad link found in check in scraper")
         return []
+    
+    unique_valid_urls.add(cleaned_defragmented)
 
 
     # Get ics.uci.edu subdomains
-    if "ics.uci.edu" in full_domain:
+    if ".ics.uci.edu" in full_domain:
         subdomains[full_domain].add(cleaned_defragmented)
 
     # Get all words in the page
@@ -253,13 +258,25 @@ def extract_next_links(url, resp):
 
     try:
         soup = BeautifulSoup(resp.raw_response.content, "html.parser")
-        extracted = set()
+        extracted = set() # Set of links extracted from the page
 
         for anchor in soup.find_all("a", href=True):
+            # For every link in the page, make the relative link an absolute link. 
             relative_link = anchor["href"]
             absolute_link = urljoin(url, relative_link)
-            absolute_link = absolute_link.split("#")[0]
-            extracted.add(absolute_link)
+
+            parsed_abs = urlparse(absolute_link)
+            defrag = defragment_and_clean(parsed_abs)
+            # If already visited, skip
+            if defrag in unique_urls:
+                continue
+            else:
+                # If not visited, add to the set
+                unique_urls.add(defrag)
+                # Only add to the extracted links from this page set if the page is valid
+                if is_valid(absolute_link):
+                    extracted.add(absolute_link)
+
         log_write(f"Extracted {len(extracted)} unique valid links from {url}")
         return list(extracted)
 
@@ -273,14 +290,21 @@ def extract_next_links(url, resp):
 def is_valid(url):
     try:
         parsed = urlparse(url)
+        # Get the clean url without the fragment
+        defrag = defragment_and_clean(parsed)
+        if defrag in avoid_urls:
+            log_write(f"Skipping already visited or avoided URL: {url}")
+            return False
 
         if parsed.scheme not in set(["http", "https"]):
             return False
 
+        # Lowercase everything
         parsed_netloc = parsed.netloc.lower()
         parsed_path = parsed.path.lower()
         parsed_query = parsed.query.lower()
 
+        # Avoid traps
         if "wiki.ics.uci.edu" in parsed_netloc or "sli.ics.uci.edu" in parsed_netloc:
             return False
 
@@ -329,18 +353,6 @@ def is_valid(url):
         for pattern in calendar_patterns:
             if re.search(pattern, parsed.query):
                 return False
-
-
-        # # Pagination trap
-        # pagination_words = ["page", "p"]
-        # for param in pagination_words:
-        #     if param in query_params:
-        #         try:
-        #             num = int(query_params[param][0])
-        #             if num > 20:
-        #                 return False
-        #         except ValueError:
-        #             pass
 
 
         return not re.match(
